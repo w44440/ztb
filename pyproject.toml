@@ -1,0 +1,36 @@
+[project]
+name = "ztb-fetcher"
+version = "0.1.0"
+description = "涨停板数据抓取软件 - 整合同花顺和韭研公社数据源"
+requires-python = ">=3.12"
+dependencies = [
+    "pywencai",
+    "pandas",
+    "duckdb",
+    "playwright",
+    "typer",
+    "rich",
+    "akshare",
+]
+
+[project.scripts]
+ztb = "main:app"
+
+[tool.uv]
+package = true  # 加上这一行，告诉 uv 把当前目录当成一个包处理
+
+# ！！！这是解决报错的关键部分 ！！！
+[tool.setuptools]
+py-modules = ["main"]      # 明确包含根目录下的 main.py
+# 自动发现 ztb_fetcher 及其所有子包
+packages = { find = { where = ["."], include = ["ztb_fetcher*"] } }
+
+# 推荐使用这种方式配置主镜像源
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
