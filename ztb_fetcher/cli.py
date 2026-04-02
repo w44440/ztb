@@ -3,6 +3,7 @@
 使用 Typer + Rich 构建命令行界面
 """
 
+import json
 import logging
 from datetime import date, datetime
 from typing import Optional
@@ -13,8 +14,9 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from ztb_fetcher.analysis import generate_report
 from ztb_fetcher.calendar import TradingCalendar
-from ztb_fetcher.config import LOG_FILE
+from ztb_fetcher.config import LOG_FILE, STATUS_FILE
 from ztb_fetcher.database import Database
 from ztb_fetcher.fetchers.jygs_fetcher import JYGSFetcher
 from ztb_fetcher.fetchers.ths_fetcher import THSFetcher
@@ -36,6 +38,33 @@ _setup_logging()
 
 app = typer.Typer(help="涨停板数据抓取软件")
 console = Console()
+
+
+def _write_status(
+    status: str,
+    date_str: str,
+    is_trade_day: bool,
+    ths_count: int = 0,
+    jygs_count: int = 0,
+    report: Optional[str] = None,
+    warnings: Optional[list] = None,
+    error: Optional[str] = None,
+) -> None:
+    """将运行状态原子写入 last_run.json，供 AI agent 读取判断结果"""
+    payload = {
+        "status": status,
+        "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "date": date_str,
+        "is_trade_day": is_trade_day,
+        "ths_count": ths_count,
+        "jygs_count": jygs_count,
+        "report": report,
+        "warnings": warnings or [],
+        "error": error,
+    }
+    tmp = STATUS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.rename(STATUS_FILE)
 
 
 def _parse_date(date_str: str) -> str:
@@ -77,41 +106,103 @@ def fetch(
     # 初始化交易日历
     calendar = TradingCalendar(db)
 
-    for date_str in dates:
-        formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+    # 状态跟踪，用于写入 last_run.json
+    _ths_count = 0
+    _jygs_count = 0
+    _warnings: list[str] = []
+    _ths_error: Optional[str] = None
+    _last_trade_date: Optional[str] = None
+    _report_path: Optional[str] = None
 
-        # 校验是否交易日
-        if not calendar.is_trade_day(date_str):
-            console.print(f"[bold]{formatted}[/bold] [yellow]⊘ 非交易日，跳过[/yellow]")
-            continue
+    try:
+        for date_str in dates:
+            formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
-        console.print(f"[bold]处理日期: {formatted}[/bold]")
+            # 校验是否交易日
+            if not calendar.is_trade_day(date_str):
+                console.print(f"[bold]{formatted}[/bold] [yellow]⊘ 非交易日，跳过[/yellow]")
+                continue
 
-        # Step 1: 先抓取 THS 数据
-        ths_codes = set()
-        try:
-            ths = THSFetcher(db)
-            stocks_df, reasons_df = ths.fetch(date_str)
-            ths_codes = set(stocks_df["code"].unique()) if not stocks_df.empty else set()
-            console.print(f"  [green]✓[/green] 同花顺: {len(stocks_df)} 只股票")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] 同花顺: {e}")
-            console.print(f"  [yellow]! 跳过 JYGS（依赖 THS 数据）[/yellow]")
-            continue
+            console.print(f"[bold]处理日期: {formatted}[/bold]")
 
-        # Step 2: 用 THS 股票代码过滤抓取 JYGS
-        if ths_codes:
+            # Step 1: 先抓取 THS 数据
+            ths_codes = set()
             try:
-                jygs = JYGSFetcher(db)
-                reasons_df = jygs.fetch(date_str, filter_codes=ths_codes)
-                console.print(f"  [green]✓[/green] 韭研公社: {len(reasons_df)} 条原因（过滤后）")
+                ths = THSFetcher(db)
+                stocks_df, reasons_df = ths.fetch(date_str)
+                ths_codes = set(stocks_df["code"].unique()) if not stocks_df.empty else set()
+                _ths_count = len(stocks_df)
+                _last_trade_date = date_str
+                console.print(f"  [green]✓[/green] 同花顺: {len(stocks_df)} 只股票")
             except Exception as e:
-                console.print(f"  [red]✗[/red] 韭研公社: {e}")
-        else:
-            console.print(f"  [yellow]! 跳过 JYGS（THS 无数据）[/yellow]")
+                _ths_error = f"同花顺抓取失败: {e}"
+                console.print(f"  [red]✗[/red] 同花顺: {e}")
+                console.print(f"  [yellow]! 跳过 JYGS（依赖 THS 数据）[/yellow]")
+                continue
 
-    console.print()
-    console.print("[bold green]✓ 数据抓取完成[/bold green]")
+            # Step 2: 用 THS 股票代码过滤抓取 JYGS
+            if ths_codes:
+                try:
+                    jygs = JYGSFetcher(db)
+                    reasons_df = jygs.fetch(date_str, filter_codes=ths_codes)
+                    _jygs_count = len(reasons_df)
+                    console.print(f"  [green]✓[/green] 韭研公社: {len(reasons_df)} 条原因（过滤后）")
+                except Exception as e:
+                    _warnings.append(f"韭研公社抓取失败: {e}")
+                    console.print(f"  [red]✗[/red] 韭研公社: {e}")
+            else:
+                console.print(f"  [yellow]! 跳过 JYGS（THS 无数据）[/yellow]")
+
+        console.print()
+        console.print("[bold green]✓ 数据抓取完成[/bold green]")
+
+        # 输出统计列表到日志
+        stats = []
+        for date_str in dates:
+            if not calendar.is_trade_day(date_str):
+                continue
+            # 查询该日期的涨停数量
+            date_obj = datetime.strptime(date_str, "%Y%m%d").date()
+            stocks_df = db.query_zt_stocks(date_obj)
+            count = len(stocks_df)
+            formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            stats.append(f"{formatted_date}: {count}只涨停")
+
+        if stats:
+            logging.info("=" * 40)
+            logging.info("涨停数据统计")
+            for stat in stats:
+                logging.info(f"  {stat}")
+            logging.info("=" * 40)
+
+        # 生成分析报告（仅最后一个交易日）
+        trade_dates = [d for d in dates if calendar.is_trade_day(d)]
+        if trade_dates:
+            last_date = trade_dates[-1]
+            console.print()
+            console.print("[bold blue]生成分析报告...[/bold blue]")
+            try:
+                report_path = generate_report(db, last_date)
+                _report_path = str(report_path)
+                console.print(f"  [green]✓[/green] {last_date}: {report_path}")
+            except Exception as e:
+                _warnings.append(f"报告生成失败: {e}")
+                console.print(f"  [yellow]! {last_date}: 报告生成失败: {e}[/yellow]")
+
+        # 写入状态文件
+        if not trade_dates:
+            _write_status("skipped", dates[-1], is_trade_day=False)
+        elif _ths_error and _ths_count == 0:
+            _write_status("error", _last_trade_date or trade_dates[-1], True,
+                          error=_ths_error, warnings=_warnings)
+        else:
+            _write_status("ok", _last_trade_date or trade_dates[-1], True,
+                          _ths_count, _jygs_count, _report_path, _warnings)
+
+    except Exception as e:
+        _write_status("error", dates[0] if dates else datetime.now().strftime("%Y%m%d"),
+                      True, error=f"未处理的异常: {e}")
+        raise
 
 
 @app.command()

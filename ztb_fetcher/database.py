@@ -238,3 +238,75 @@ class Database:
             return None
         finally:
             conn.close()
+
+    def query_lianban_stats(self, date_val: Optional[date] = None, days: int = 1) -> pd.DataFrame:
+        """查询连板结构统计（返回最近 N 个有数据的关键交易日）"""
+        conn = self._get_connection()
+        try:
+            if date_val and days == 1:
+                sql = """
+                    SELECT date,
+                           COUNT(*) AS total,
+                           COUNT(*) FILTER (WHERE lianban_days = 1) AS shouban,
+                           COUNT(*) FILTER (WHERE lianban_days = 2) AS erban,
+                           COUNT(*) FILTER (WHERE lianban_days >= 3) AS sanban_plus,
+                           MAX(lianban_days) AS max_lianban,
+                           ROUND(AVG(lianban_days), 2) AS avg_lianban,
+                           MEDIAN(lianban_days) AS median_lianban
+                    FROM zt_stocks
+                    WHERE date = ?
+                    GROUP BY date
+                    ORDER BY date DESC
+                """
+                params = [date_val]
+            else:
+                anchor = f"'{date_val}'" if date_val else "CURRENT_DATE"
+                sql = f"""
+                    SELECT date,
+                           COUNT(*) AS total,
+                           COUNT(*) FILTER (WHERE lianban_days = 1) AS shouban,
+                           COUNT(*) FILTER (WHERE lianban_days = 2) AS erban,
+                           COUNT(*) FILTER (WHERE lianban_days >= 3) AS sanban_plus,
+                           MAX(lianban_days) AS max_lianban,
+                           ROUND(AVG(lianban_days), 2) AS avg_lianban,
+                           MEDIAN(lianban_days) AS median_lianban
+                    FROM zt_stocks
+                    WHERE date <= {anchor}
+                    GROUP BY date
+                    ORDER BY date DESC
+                    LIMIT {days}
+                """
+                params = []
+
+            result = conn.execute(sql, params).fetchdf()
+            return result
+        finally:
+            conn.close()
+
+    def query_daily_count_with_ma(self, date_val: Optional[date] = None, days: int = 20) -> pd.DataFrame:
+        """查询每日涨停数及 MA5/MA10（返回最近 N 个有数据的关键交易日）"""
+        conn = self._get_connection()
+        try:
+            anchor = f"'{date_val}'" if date_val else "CURRENT_DATE"
+            result = conn.execute(
+                f"""
+                WITH recent AS (
+                    SELECT date, COUNT(*) AS zt_count
+                    FROM zt_stocks
+                    WHERE date <= {anchor}
+                    GROUP BY date
+                    ORDER BY date DESC
+                    LIMIT {days + 10}
+                ),
+                ordered AS (
+                    SELECT date, zt_count,
+                           ROUND(AVG(zt_count) OVER (ORDER BY date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), 1) AS ma5,
+                           ROUND(AVG(zt_count) OVER (ORDER BY date ROWS BETWEEN 9 PRECEDING AND CURRENT ROW), 1) AS ma10
+                    FROM recent
+                )
+                SELECT * FROM ordered ORDER BY date DESC LIMIT {days}
+                """
+            ).fetchdf()
+            return result
+        finally:
+            conn.close()

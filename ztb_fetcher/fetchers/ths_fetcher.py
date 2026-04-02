@@ -111,6 +111,14 @@ class THSFetcher:
         if "code" in result.columns:
             result["code"] = result["code"].str.split(".").str[0]
 
+        # 过滤掉涨停类型为空的记录（非涨停股）
+        if "zt_type" in result.columns:
+            before = len(result)
+            result = result[result["zt_type"].notna() & (result["zt_type"] != "-")]
+            after = len(result)
+            if before != after:
+                logger.info(f"[THS] 过滤非涨停数据: {before - after} 条被移除, 剩余 {after} 条")
+
         # 分离股票基础数据和原因数据
         stock_cols = [
             "date",
@@ -135,7 +143,7 @@ class THSFetcher:
                     "code": result["code"],
                     "name": result["name"],
                     "source": "ths",
-                    "cate": result["zt_reason"],
+                    "cate": None,
                     "reason": result["zt_reason"],
                 }
             )
