@@ -4,7 +4,9 @@
 """
 
 import logging
-from datetime import date, datetime
+import time
+from datetime import datetime
+from functools import wraps
 from typing import Optional
 
 import pandas as pd
@@ -16,12 +18,59 @@ from ztb_fetcher.database import Database
 logger = logging.getLogger(__name__)
 
 
+def retry_on_error(max_retries: int = 2, delay_seconds: int = 10):
+    """固定间隔重试装饰器
+
+    只对特定网络/服务错误进行重试：
+    - NoneType 错误（pywencai 返回 None）
+    - ConnectionError, TimeoutError
+
+    Args:
+        max_retries: 最大重试次数（默认2次，共3次尝试）
+        delay_seconds: 每次重试间隔秒数（默认10秒）
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e).lower()
+
+                    # 判断是否为可重试错误
+                    is_retryable = (
+                        "nonetype" in error_msg
+                        or "connection" in error_msg
+                        or "timeout" in error_msg
+                        or "temporary" in error_msg
+                    )
+
+                    if not is_retryable or attempt == max_retries:
+                        raise
+
+                    logger.warning(
+                        f"[THS] 第 {attempt + 1} 次尝试失败，{delay_seconds}s 后重试: {e}"
+                    )
+                    time.sleep(delay_seconds)
+
+            raise last_exception
+
+        return wrapper
+
+    return decorator
+
+
 class THSFetcher:
     """同花顺数据抓取器"""
 
     def __init__(self, db: Database):
         self.db = db
 
+    @retry_on_error(max_retries=2, delay_seconds=10)
     def fetch(self, date_str: Optional[str] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
         """获取涨停数据
 
@@ -40,7 +89,7 @@ class THSFetcher:
         logger.info(f"[THS] 查询语句: {query}")
 
         try:
-            df = pywencai.get(query=query, sort_key="成交金额", sort_order="desc")
+            df = pywencai.get(query=query, sort_key="成交金额", sort_order="desc", loop=True)
 
             if df.empty:
                 logger.warning(f"[THS] {date_str} 无涨停数据")

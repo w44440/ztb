@@ -1,4 +1,5 @@
 """缓存管理模块"""
+
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,7 +33,7 @@ class CacheManager:
             return None
 
         try:
-            with open(cache_path, 'r', encoding='utf-8') as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             logger.warning(f"读取缓存失败 {cache_path}: {e}")
@@ -43,7 +44,7 @@ class CacheManager:
         cache_path = self._get_cache_path(key, suffix)
 
         try:
-            with open(cache_path, 'w', encoding='utf-8') as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 f.write(content)
             return True
         except Exception as e:

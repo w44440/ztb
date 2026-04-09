@@ -5,7 +5,7 @@
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -20,6 +20,7 @@ from ztb_fetcher.config import LOG_FILE, STATUS_FILE
 from ztb_fetcher.database import Database
 from ztb_fetcher.fetchers.jygs_fetcher import JYGSFetcher
 from ztb_fetcher.fetchers.ths_fetcher import THSFetcher
+from ztb_fetcher.notifier import notify_fetch_result
 
 
 # 设置日志：同时输出到控制台和文件
@@ -49,7 +50,7 @@ def _write_status(
     report: Optional[str] = None,
     warnings: Optional[list] = None,
     error: Optional[str] = None,
-) -> None:
+) -> dict:
     """将运行状态原子写入 last_run.json，供 AI agent 读取判断结果"""
     payload = {
         "status": status,
@@ -65,6 +66,32 @@ def _write_status(
     tmp = STATUS_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.rename(STATUS_FILE)
+    return payload
+
+
+def _write_status_and_notify(
+    status: str,
+    date_str: str,
+    is_trade_day: bool,
+    ths_count: int = 0,
+    jygs_count: int = 0,
+    report: Optional[str] = None,
+    warnings: Optional[list] = None,
+    error: Optional[str] = None,
+) -> None:
+    payload = _write_status(
+        status,
+        date_str,
+        is_trade_day,
+        ths_count,
+        jygs_count,
+        report,
+        warnings,
+        error,
+    )
+    notify_warnings = notify_fetch_result(payload)
+    if notify_warnings:
+        console.print(f"  [yellow]! {'; '.join(notify_warnings)}[/yellow]")
 
 
 def _parse_date(date_str: str) -> str:
@@ -99,7 +126,7 @@ def fetch(
         # 默认今天
         dates = [datetime.now().strftime("%Y%m%d")]
 
-    console.print(f"[bold blue]开始抓取涨停数据...[/bold blue]")
+    console.print("[bold blue]开始抓取涨停数据...[/bold blue]")
     console.print(f"日期范围: {dates[0]} 至 {dates[-1]} ({len(dates)} 天)")
     console.print()
 
@@ -137,7 +164,7 @@ def fetch(
             except Exception as e:
                 _ths_error = f"同花顺抓取失败: {e}"
                 console.print(f"  [red]✗[/red] 同花顺: {e}")
-                console.print(f"  [yellow]! 跳过 JYGS（依赖 THS 数据）[/yellow]")
+                console.print("  [yellow]! 跳过 JYGS（依赖 THS 数据）[/yellow]")
                 continue
 
             # Step 2: 用 THS 股票代码过滤抓取 JYGS
@@ -146,12 +173,14 @@ def fetch(
                     jygs = JYGSFetcher(db)
                     reasons_df = jygs.fetch(date_str, filter_codes=ths_codes)
                     _jygs_count = len(reasons_df)
-                    console.print(f"  [green]✓[/green] 韭研公社: {len(reasons_df)} 条原因（过滤后）")
+                    console.print(
+                        f"  [green]✓[/green] 韭研公社: {len(reasons_df)} 条原因（过滤后）"
+                    )
                 except Exception as e:
                     _warnings.append(f"韭研公社抓取失败: {e}")
                     console.print(f"  [red]✗[/red] 韭研公社: {e}")
             else:
-                console.print(f"  [yellow]! 跳过 JYGS（THS 无数据）[/yellow]")
+                console.print("  [yellow]! 跳过 JYGS（THS 无数据）[/yellow]")
 
         console.print()
         console.print("[bold green]✓ 数据抓取完成[/bold green]")
@@ -191,17 +220,33 @@ def fetch(
 
         # 写入状态文件
         if not trade_dates:
-            _write_status("skipped", dates[-1], is_trade_day=False)
+            _write_status_and_notify("skipped", dates[-1], is_trade_day=False)
         elif _ths_error and _ths_count == 0:
-            _write_status("error", _last_trade_date or trade_dates[-1], True,
-                          error=_ths_error, warnings=_warnings)
+            _write_status_and_notify(
+                "error",
+                _last_trade_date or trade_dates[-1],
+                True,
+                error=_ths_error,
+                warnings=_warnings,
+            )
         else:
-            _write_status("ok", _last_trade_date or trade_dates[-1], True,
-                          _ths_count, _jygs_count, _report_path, _warnings)
+            _write_status_and_notify(
+                "ok",
+                _last_trade_date or trade_dates[-1],
+                True,
+                _ths_count,
+                _jygs_count,
+                _report_path,
+                _warnings,
+            )
 
     except Exception as e:
-        _write_status("error", dates[0] if dates else datetime.now().strftime("%Y%m%d"),
-                      True, error=f"未处理的异常: {e}")
+        _write_status_and_notify(
+            "error",
+            dates[0] if dates else datetime.now().strftime("%Y%m%d"),
+            True,
+            error=f"未处理的异常: {e}",
+        )
         raise
 
 
@@ -310,7 +355,7 @@ def query(
         reasons_ths = db.query_zt_reasons(date_obj, source="ths")
         reasons_jygs = db.query_zt_reasons(date_obj, source="jygs")
 
-        console.print(f"[bold]数据统计[/bold]")
+        console.print("[bold]数据统计[/bold]")
         console.print(f"  同花顺涨停股票: {len(stocks_df)} 条")
         console.print(f"  同花顺涨停原因: {len(reasons_ths)} 条")
         console.print(f"  韭研公社涨停原因: {len(reasons_jygs)} 条")

@@ -1,10 +1,9 @@
 """Playwright 工具模块"""
 
 import logging
-from functools import partial
 from typing import Callable
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import sync_playwright
 
 from ztb_fetcher.utils.error_handler import PlaywrightBrowserError, PlaywrightNavigationError
 

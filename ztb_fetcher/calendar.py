@@ -1,8 +1,7 @@
 """交易日日历模块"""
 
 import logging
-from datetime import date, datetime
-from typing import Optional
+from datetime import datetime
 
 import akshare as ak
 import pandas as pd
@@ -31,7 +30,6 @@ class TradingCalendar:
         date_val = datetime.strptime(date_str, "%Y%m%d").date()
         year = date_str[:4]
         month = date_str[4:6]
-        month_key = f"{year}-{month}"
 
         # 先查数据库
         result = self.db.is_trade_day(date_val)
@@ -69,10 +67,7 @@ class TradingCalendar:
             month_start = f"{year}-{month}-01"
             month_end_date = pd.to_datetime(month_start) + pd.DateOffset(months=1)
 
-            month_df = df[
-                (df["trade_date"] >= month_start)
-                & (df["trade_date"] < month_end_date)
-            ]
+            month_df = df[(df["trade_date"] >= month_start) & (df["trade_date"] < month_end_date)]
 
             if month_df.empty:
                 logger.warning(f"[TradingCalendar] {month_key} 无交易日数据")

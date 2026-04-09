@@ -55,9 +55,7 @@ class JYGSFetcher:
         cached_text = _cache.get(formatted_date, suffix=".txt")
         if cached_text is not None:
             logger.info(f"[JYGS] 从缓存读取 {formatted_date} 数据")
-            df = self._parse_data(
-                cached_text.split("\n"), formatted_date, filter_codes
-            )
+            df = self._parse_data(cached_text.split("\n"), formatted_date, filter_codes)
             if not df.empty:
                 self._save_to_db(df, formatted_date)
                 return df
@@ -68,16 +66,12 @@ class JYGSFetcher:
             texts = get_data_cdp(JYGS_BASE_URL, fetch_data, self._check_login)
 
             if texts and texts[0]:
-                df = self._parse_data(
-                    texts[0].split("\n"), formatted_date, filter_codes
-                )
+                df = self._parse_data(texts[0].split("\n"), formatted_date, filter_codes)
                 if not df.empty:
                     self._save_to_db(df, formatted_date)
                     # 保存缓存（原始数据不过滤）
                     _cache.set(formatted_date, texts[0], suffix=".txt")
-                    logger.info(
-                        f"[JYGS] ✅ {formatted_date} 数据保存成功: {len(df)} 条"
-                    )
+                    logger.info(f"[JYGS] ✅ {formatted_date} 数据保存成功: {len(df)} 条")
                     return df
 
             logger.warning(f"[JYGS] ⚠️ {formatted_date} 没有抓取到数据")

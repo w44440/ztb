@@ -5,7 +5,7 @@
 
 import re
 from collections import Counter
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib

@@ -1,6 +1,6 @@
 """DuckDB 数据库操作模块"""
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -214,7 +214,7 @@ class Database:
             for d in dates:
                 conn.execute(
                     "INSERT OR IGNORE INTO trading_calendar (trade_date, is_open) VALUES (?, TRUE)",
-                    [d]
+                    [d],
                 )
         finally:
             conn.close()
@@ -230,8 +230,7 @@ class Database:
         conn = self._get_connection()
         try:
             result = conn.execute(
-                "SELECT is_open FROM trading_calendar WHERE trade_date = ?",
-                [date_val]
+                "SELECT is_open FROM trading_calendar WHERE trade_date = ?", [date_val]
             ).fetchall()
             if result:
                 return result[0][0]
@@ -283,7 +282,9 @@ class Database:
         finally:
             conn.close()
 
-    def query_daily_count_with_ma(self, date_val: Optional[date] = None, days: int = 20) -> pd.DataFrame:
+    def query_daily_count_with_ma(
+        self, date_val: Optional[date] = None, days: int = 20
+    ) -> pd.DataFrame:
         """查询每日涨停数及 MA5/MA10（返回最近 N 个有数据的关键交易日）"""
         conn = self._get_connection()
         try:
