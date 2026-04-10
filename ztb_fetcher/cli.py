@@ -69,7 +69,9 @@ def _resolve_dates(
     if start_value and end_value:
         return [
             d.strftime("%Y%m%d")
-            for d in pd.date_range(start=_parse_date(start_value), end=_parse_date(end_value), freq="D")
+            for d in pd.date_range(
+                start=_parse_date(start_value), end=_parse_date(end_value), freq="D"
+            )
         ]
     return [datetime.now().strftime("%Y%m%d")]
 
@@ -106,7 +108,12 @@ def _run_single_fetch(
         "date": date_str,
         "is_trade_day": False,
         "status": "skipped",
-        "ths": {"requested": source in {"all", "ths"}, "status": "skipped", "count": 0, "error": None},
+        "ths": {
+            "requested": source in {"all", "ths"},
+            "status": "skipped",
+            "count": 0,
+            "error": None,
+        },
         "jygs": {
             "requested": source in {"all", "jygs"},
             "status": "skipped",
@@ -128,7 +135,9 @@ def _run_single_fetch(
         try:
             ths = THSFetcher(db)
             stocks_df, _ = ths.fetch(date_str)
-            ths_codes = set(stocks_df["code"].astype(str).unique()) if not stocks_df.empty else set()
+            ths_codes = (
+                set(stocks_df["code"].astype(str).unique()) if not stocks_df.empty else set()
+            )
             result["ths"] = {
                 "requested": True,
                 "status": "ok",
@@ -137,7 +146,12 @@ def _run_single_fetch(
             }
         except Exception as exc:  # noqa: BLE001 - surfaced in structured result.
             error_message = f"同花顺抓取失败: {exc}"
-            result["ths"] = {"requested": True, "status": "error", "count": 0, "error": error_message}
+            result["ths"] = {
+                "requested": True,
+                "status": "error",
+                "count": 0,
+                "error": error_message,
+            }
             result["status"] = "error"
             result["error"] = error_message
             return result
@@ -213,8 +227,12 @@ def _run_fetch_command(
         "summary": {
             "requested_days": len(dates),
             "trade_days": len(trade_results),
-            "ths_count": sum(item["ths"]["count"] for item in trade_results if item["ths"]["requested"]),
-            "jygs_count": sum(item["jygs"]["count"] for item in trade_results if item["jygs"]["requested"]),
+            "ths_count": sum(
+                item["ths"]["count"] for item in trade_results if item["ths"]["requested"]
+            ),
+            "jygs_count": sum(
+                item["jygs"]["count"] for item in trade_results if item["jygs"]["requested"]
+            ),
         },
     }
 
@@ -385,7 +403,9 @@ def _write_status(payload: dict[str, Any]) -> None:
 
 @app.command()
 def fetch(
-    date: Optional[str] = typer.Option(None, "--date", "-d", help="指定日期 (YYYYMMDD 或 YYYY-MM-DD)"),
+    date: Optional[str] = typer.Option(
+        None, "--date", "-d", help="指定日期 (YYYYMMDD 或 YYYY-MM-DD)"
+    ),
     start: Optional[str] = typer.Option(None, "--start", "-s", help="开始日期 (YYYYMMDD)"),
     end: Optional[str] = typer.Option(None, "--end", "-e", help="结束日期 (YYYYMMDD)"),
 ):
@@ -573,7 +593,9 @@ def query(
 
 @agent_app.command("fetch")
 def agent_fetch(
-    date: Optional[str] = typer.Option(None, "--date", "-d", help="指定日期 (YYYYMMDD 或 YYYY-MM-DD)"),
+    date: Optional[str] = typer.Option(
+        None, "--date", "-d", help="指定日期 (YYYYMMDD 或 YYYY-MM-DD)"
+    ),
     start: Optional[str] = typer.Option(None, "--start", "-s", help="开始日期 (YYYYMMDD)"),
     end: Optional[str] = typer.Option(None, "--end", "-e", help="结束日期 (YYYYMMDD)"),
     source: str = typer.Option("all", "--source", help="抓取来源: all/ths/jygs"),
