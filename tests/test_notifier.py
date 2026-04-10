@@ -24,7 +24,7 @@ class FakeResponse:
 class NotifierTest(unittest.TestCase):
     def test_no_webhook_skips_notification(self):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch("ztb_fetcher.notifier.get_config", return_value=None),
             patch("ztb_fetcher.notifier.request.urlopen") as urlopen,
         ):
             warnings = notify_fetch_result({"status": "ok", "date": "20260407"})

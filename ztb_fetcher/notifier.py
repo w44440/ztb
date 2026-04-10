@@ -59,6 +59,7 @@ def _build_markdown(result: Mapping[str, Any]) -> str:
     date_str = str(result.get("date") or "-")
     title = {
         "ok": "涨停数据抓取完成",
+        "partial": "涨停数据抓取部分完成",
         "error": "涨停数据抓取失败",
         "skipped": "涨停数据抓取跳过",
     }.get(status, "涨停数据抓取结果")

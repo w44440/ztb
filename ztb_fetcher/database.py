@@ -204,6 +204,32 @@ class Database:
         finally:
             conn.close()
 
+    def query_fetch_logs(self, date_val: Optional[date] = None) -> pd.DataFrame:
+        """查询抓取日志."""
+        conn = self._get_connection()
+        try:
+            if date_val:
+                result = conn.execute(
+                    """
+                    SELECT date, source, count, status, message, created_at
+                    FROM fetch_log
+                    WHERE date = ?
+                    ORDER BY created_at DESC
+                    """,
+                    [date_val],
+                ).fetchdf()
+            else:
+                result = conn.execute(
+                    """
+                    SELECT date, source, count, status, message, created_at
+                    FROM fetch_log
+                    ORDER BY created_at DESC
+                    """
+                ).fetchdf()
+            return result
+        finally:
+            conn.close()
+
     def save_trade_dates(self, dates: list[date]):
         """批量保存交易日期到交易日历表"""
         if not dates:
