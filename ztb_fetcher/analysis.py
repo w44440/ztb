@@ -44,6 +44,18 @@ plt.rcParams.update(
 
 def _tokenize_reasons(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     """轻量分词统计热点关键词"""
+    summary_df, _ = build_daily_hot_topics(df, top_n=top_n)
+    if summary_df.empty:
+        return pd.DataFrame()
+
+    return summary_df[["关键词", "出现次数", "涉及股票数", "样例股票"]]
+
+
+def build_daily_hot_topics(
+    df: pd.DataFrame,
+    top_n: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """按单日理由数据生成热点汇总和热点-股票明细。"""
     keyword_count = Counter()
     keyword_stocks: dict[str, set[tuple[str, str]]] = {}
 
@@ -63,20 +75,29 @@ def _tokenize_reasons(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
             keyword_count[token] += 1
             keyword_stocks.setdefault(token, set()).add((row["code"], row["name"]))
 
-    results = []
-    for kw, count in keyword_count.most_common(top_n):
-        stocks = keyword_stocks[kw]
-        sample = "、".join(name for _, name in list(stocks)[:3])
-        results.append(
+    summary_rows = []
+    stock_rows = []
+    for rank, (kw, count) in enumerate(keyword_count.most_common(top_n), start=1):
+        stocks = sorted(keyword_stocks[kw], key=lambda item: (item[0], item[1]))
+        sample = "、".join(name for _, name in stocks[:3])
+        summary_rows.append(
             {
                 "关键词": kw,
                 "出现次数": count,
                 "涉及股票数": len(stocks),
                 "样例股票": sample,
+                "排序": rank,
             }
         )
+        for code, name in stocks:
+            stock_rows.append({"关键词": kw, "代码": code, "名称": name})
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(summary_rows), pd.DataFrame(stock_rows)
+
+
+def _format_topic_bar_label(appearance_count: int, stock_count: int) -> str:
+    """格式化热点柱状图标签，统一展示计数口径。"""
+    return f"{appearance_count}次 / {stock_count}只"
 
 
 def _plot_report(
@@ -218,12 +239,16 @@ def _plot_report(
         )
 
         bars = ax3.barh(y_labels, counts, color=colors, height=0.55)
-        for bar, stock_count in zip(bars, keywords_df["涉及股票数"].astype(int)):
+        for bar, appearance_count, stock_count in zip(
+            bars,
+            keywords_df["出现次数"].astype(int),
+            keywords_df["涉及股票数"].astype(int),
+        ):
             width = bar.get_width()
             ax3.text(
                 width + 0.3,
                 bar.get_y() + bar.get_height() / 2,
-                f"{stock_count}只",
+                _format_topic_bar_label(appearance_count, stock_count),
                 ha="left",
                 va="center",
                 fontsize=10,
@@ -255,14 +280,24 @@ def generate_report(db, date_str: str, days: int = ANALYSIS_DAYS) -> Path:
 
     lianban_df = db.query_lianban_stats(date_val=date_obj, days=days)
     trend_df = db.query_daily_count_with_ma(date_val=date_obj, days=days)
-
-    reasons_df = db.query_zt_reasons(date_val=None)
-    if not reasons_df.empty:
-        min_date = pd.Timestamp(date_obj) - pd.Timedelta(days=days - 1)
-        reasons_df = reasons_df[reasons_df["date"] >= min_date]
-        keywords_df = _tokenize_reasons(reasons_df, top_n=10)
+    keywords_df = db.get_hot_topics_by_date(date_obj)
+    if not keywords_df.empty:
+        keywords_df = keywords_df.rename(
+            columns={
+                "topic": "关键词",
+                "appearance_count": "出现次数",
+                "stock_count": "涉及股票数",
+                "sample_stocks": "样例股票",
+                "rank": "排序",
+            }
+        )
+        keywords_df = keywords_df.sort_values(["排序", "关键词"]).head(10)
     else:
-        keywords_df = pd.DataFrame()
+        reasons_df = db.query_zt_reasons(date_obj)
+        if not reasons_df.empty:
+            keywords_df = _tokenize_reasons(reasons_df, top_n=10)
+        else:
+            keywords_df = pd.DataFrame()
 
     _plot_report(lianban_df, trend_df, keywords_df, date_str, output_path)
     return output_path

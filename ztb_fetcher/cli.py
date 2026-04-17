@@ -12,13 +12,14 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from ztb_fetcher.analysis import _tokenize_reasons, generate_report
+from ztb_fetcher.analysis import _tokenize_reasons, build_daily_hot_topics, generate_report
 from ztb_fetcher.calendar import TradingCalendar
-from ztb_fetcher.config import LOG_FILE, STATUS_FILE
+from ztb_fetcher.config import JYGS_LOGIN_URL, JYGS_USER_DATA_DIR, LOG_FILE, STATUS_FILE, get_config
 from ztb_fetcher.database import Database
 from ztb_fetcher.fetchers.jygs_fetcher import JYGSFetcher
 from ztb_fetcher.fetchers.ths_fetcher import THSFetcher
 from ztb_fetcher.notifier import notify_fetch_result
+from ztb_fetcher.utils.playwright_util import ensure_logged_in
 
 
 def _setup_logging():
@@ -138,12 +139,17 @@ def _run_single_fetch(
             ths_codes = (
                 set(stocks_df["code"].astype(str).unique()) if not stocks_df.empty else set()
             )
+            ths_metadata = ths.last_fetch_metadata
             result["ths"] = {
                 "requested": True,
                 "status": "ok",
                 "count": len(stocks_df),
                 "error": None,
+                "cate_count": int(ths_metadata.get("cate_count", 0)),
             }
+            result["warnings"].extend(str(item) for item in ths_metadata.get("warnings", []))
+            if result["warnings"] and result["status"] == "ok":
+                result["status"] = "partial"
         except Exception as exc:  # noqa: BLE001 - surfaced in structured result.
             error_message = f"同花顺抓取失败: {exc}"
             result["ths"] = {
@@ -151,6 +157,7 @@ def _run_single_fetch(
                 "status": "error",
                 "count": 0,
                 "error": error_message,
+                "cate_count": 0,
             }
             result["status"] = "error"
             result["error"] = error_message
@@ -162,6 +169,7 @@ def _run_single_fetch(
             "status": "cached" if ths_codes else "missing",
             "count": len(ths_codes),
             "error": None,
+            "cate_count": 0,
         }
 
     if source in {"all", "jygs"}:
@@ -188,12 +196,23 @@ def _run_single_fetch(
             try:
                 jygs = JYGSFetcher(db)
                 reasons_df = jygs.fetch(date_str, filter_codes=ths_codes)
-                result["jygs"] = {
-                    "requested": True,
-                    "status": "ok",
-                    "count": len(reasons_df),
-                    "error": None,
-                }
+                if reasons_df.empty:
+                    warning_message = "韭研公社未抓取到数据，可能未登录，请先运行 `ztb login`"
+                    result["jygs"] = {
+                        "requested": True,
+                        "status": "error",
+                        "count": 0,
+                        "error": warning_message,
+                    }
+                    result["warnings"].append(warning_message)
+                    result["status"] = "partial"
+                else:
+                    result["jygs"] = {
+                        "requested": True,
+                        "status": "ok",
+                        "count": len(reasons_df),
+                        "error": None,
+                    }
             except Exception as exc:  # noqa: BLE001 - surfaced in structured result.
                 warning_message = f"韭研公社抓取失败: {exc}"
                 result["jygs"] = {
@@ -204,6 +223,14 @@ def _run_single_fetch(
                 }
                 result["warnings"].append(warning_message)
                 result["status"] = "partial"
+
+    try:
+        _refresh_daily_hot_topics(db, date_str)
+    except Exception as exc:  # noqa: BLE001 - surfaced as warning.
+        warning_message = f"热点回顾生成失败: {exc}"
+        result["warnings"].append(warning_message)
+        if result["status"] == "ok":
+            result["status"] = "partial"
 
     return result
 
@@ -253,15 +280,8 @@ def _build_context_payload(db: Database, date_str: str, days: int) -> dict[str, 
     lianban_df = db.query_lianban_stats(date_val=date_obj, days=days)
     trend_df = db.query_daily_count_with_ma(date_val=date_obj, days=days)
     stocks_df = db.query_zt_stocks(date_obj)
-    reasons_df = db.query_zt_reasons()
     fetch_logs_df = db.query_fetch_logs(date_obj)
-
-    if not reasons_df.empty:
-        min_date = pd.Timestamp(date_obj) - pd.Timedelta(days=days - 1)
-        reasons_df = reasons_df[reasons_df["date"] >= min_date]
-        topic_df = _tokenize_reasons(reasons_df, top_n=10)
-    else:
-        topic_df = pd.DataFrame()
+    topic_df = _get_hot_topics_for_window(db, date_obj, days)
 
     latest_lianban = lianban_df.sort_values("date").iloc[-1] if not lianban_df.empty else None
     leaders = []
@@ -401,6 +421,75 @@ def _write_status(payload: dict[str, Any]) -> None:
     tmp.rename(STATUS_FILE)
 
 
+def _refresh_daily_hot_topics(db: Database, date_str: str) -> None:
+    date_obj = _date_to_obj(date_str)
+    reasons_df = db.query_zt_reasons(date_obj)
+    summary_df, stock_df = build_daily_hot_topics(reasons_df)
+
+    if summary_df.empty:
+        normalized_summary = pd.DataFrame(
+            columns=["date", "topic", "appearance_count", "stock_count", "sample_stocks", "rank"]
+        )
+    else:
+        normalized_summary = summary_df.rename(
+            columns={
+                "关键词": "topic",
+                "出现次数": "appearance_count",
+                "涉及股票数": "stock_count",
+                "样例股票": "sample_stocks",
+                "排序": "rank",
+            }
+        )
+        normalized_summary["date"] = date_obj
+        normalized_summary = normalized_summary[
+            ["date", "topic", "appearance_count", "stock_count", "sample_stocks", "rank"]
+        ]
+
+    if stock_df.empty:
+        normalized_stock_df = pd.DataFrame(columns=["date", "topic", "code", "name"])
+    else:
+        normalized_stock_df = stock_df.rename(
+            columns={"关键词": "topic", "代码": "code", "名称": "name"}
+        )
+        normalized_stock_df["date"] = date_obj
+        normalized_stock_df = normalized_stock_df[["date", "topic", "code", "name"]]
+
+    db.save_daily_hot_topics(date_obj, normalized_summary, normalized_stock_df)
+
+
+def _format_stock_names(stocks_df: pd.DataFrame, limit: int = 5) -> str:
+    if stocks_df.empty:
+        return "-"
+
+    names = stocks_df["name"].astype(str).tolist()
+    text = "、".join(names[:limit])
+    if len(names) > limit:
+        return f"{text} 等{len(names)}只"
+    return text
+
+
+def _get_hot_topics_for_window(db: Database, date_obj: date, days: int) -> pd.DataFrame:
+    min_date = pd.Timestamp(date_obj) - pd.Timedelta(days=days - 1)
+    topic_df = db.get_hot_topics_in_range(min_date.date(), date_obj)
+    if not topic_df.empty:
+        return topic_df.rename(
+            columns={
+                "topic": "关键词",
+                "appearance_count": "出现次数",
+                "stock_count": "涉及股票数",
+                "sample_stocks": "样例股票",
+                "rank": "排序",
+            }
+        )
+
+    reasons_df = db.query_zt_reasons()
+    if reasons_df.empty:
+        return pd.DataFrame()
+
+    reasons_df = reasons_df[reasons_df["date"] >= min_date]
+    return _tokenize_reasons(reasons_df, top_n=10)
+
+
 @app.command()
 def fetch(
     date: Optional[str] = typer.Option(
@@ -481,32 +570,92 @@ def fetch(
 
 
 @app.command()
-def history(days: int = typer.Option(7, "--days", "-d", help="查询天数")):
-    """查询历史数据统计."""
+def history(topic: Optional[str] = typer.Option(None, "--topic", "-p", help="指定热点词")):
+    """查询当日最热热点回顾."""
     db = Database()
-    console.print(f"[bold blue]近 {days} 天涨停统计[/bold blue]")
-    console.print()
-
-    df = db.query_history(days)
-    if df.empty:
-        console.print("[yellow]暂无数据[/yellow]")
+    latest_date = db.get_latest_hot_topic_date()
+    if latest_date is None:
+        console.print("[yellow]暂无热点回顾数据[/yellow]")
         return
 
-    table = Table(box=box.SIMPLE)
-    table.add_column("日期", style="cyan")
-    table.add_column("涨停数量", justify="right", style="green")
-    table.add_column("平均连板", justify="right")
-    table.add_column("最高连板", justify="right", style="magenta")
+    notice = None
+    if topic:
+        current_df = db.get_hot_topic_by_date(latest_date, topic)
+        if current_df.empty:
+            current_df = db.get_latest_hot_topic_occurrence(topic, latest_date)
+            if current_df.empty:
+                console.print(f"[yellow]热点 {topic} 暂无历史记录[/yellow]")
+                return
+            notice = f"热点 {topic} 当日未出现，展示最近一次历史记录"
+    else:
+        current_df = db.get_hot_topics_by_date(latest_date).head(1)
+        if current_df.empty:
+            console.print("[yellow]暂无热点回顾数据[/yellow]")
+            return
+        topic = str(current_df.iloc[0]["topic"])
 
-    for _, row in df.iterrows():
-        table.add_row(
-            str(row["date"]),
-            str(int(row["count"])),
-            f"{row['avg_lianban']:.2f}",
-            str(int(row["max_lianban"])),
-        )
+    current_row = current_df.iloc[0]
+    current_date = pd.Timestamp(current_row["date"]).date()
+    previous_df = db.get_previous_hot_topic_occurrence(topic, current_date)
+    current_stocks_df = db.get_hot_topic_stocks(current_date, topic)
+    previous_stocks_df = (
+        db.get_hot_topic_stocks(pd.Timestamp(previous_df.iloc[0]["date"]).date(), topic)
+        if not previous_df.empty
+        else pd.DataFrame()
+    )
+
+    console.print("[bold blue]热点回顾[/bold blue]")
+    if notice:
+        console.print(f"[yellow]{notice}[/yellow]")
+    console.print()
+
+    table = Table(box=box.SIMPLE)
+    table.add_column("字段", style="cyan")
+    table.add_column("内容")
+    table.add_row("日期", str(current_date))
+    table.add_row("热点", str(topic))
+    table.add_row("当日出现次数", str(int(current_row["appearance_count"])))
+    table.add_row("当日涉及股票数", str(int(current_row["stock_count"])))
+    table.add_row("当日涨停股票", _format_stock_names(current_stocks_df))
+
+    if previous_df.empty:
+        table.add_row("上次出现日期", "首次出现")
+        table.add_row("上次涨停股票", "-")
+    else:
+        previous_date = pd.Timestamp(previous_df.iloc[0]["date"]).date()
+        table.add_row("上次出现日期", str(previous_date))
+        table.add_row("上次涨停股票", _format_stock_names(previous_stocks_df))
 
     console.print(table)
+
+
+@app.command("backfill-topics")
+def backfill_topics():
+    """基于本地理由数据回填每日热点结果."""
+    db = Database()
+    reason_dates = db.get_reason_dates()
+    if not reason_dates:
+        console.print("[yellow]暂无理由数据，无需回填[/yellow]")
+        return
+
+    console.print("[bold blue]开始回填每日热点...[/bold blue]")
+    success_count = 0
+    failed_dates: list[str] = []
+
+    for date_obj in reason_dates:
+        date_str = date_obj.strftime("%Y%m%d")
+        try:
+            _refresh_daily_hot_topics(db, date_str)
+            success_count += 1
+        except Exception as exc:  # noqa: BLE001 - surfaced in CLI summary.
+            failed_dates.append(f"{date_str}: {exc}")
+
+    console.print(f"[green]✓ 已处理 {success_count}/{len(reason_dates)} 天[/green]")
+    if failed_dates:
+        console.print("[yellow]以下日期回填失败:[/yellow]")
+        for item in failed_dates:
+            console.print(f"  {item}")
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -589,6 +738,30 @@ def query(
     console.print(f"  同花顺涨停股票: {len(stocks_df)} 条")
     console.print(f"  同花顺涨停原因: {len(reasons_ths)} 条")
     console.print(f"  韭研公社涨停原因: {len(reasons_jygs)} 条")
+
+
+def _login_jygs() -> None:
+    """打开浏览器完成韭研公社登录并保存状态."""
+    login_url = get_config("jygs_login_url", JYGS_LOGIN_URL)
+    user_data_dir = Path(get_config("jygs_user_data_dir", str(JYGS_USER_DATA_DIR))).expanduser()
+
+    console.print("[bold blue]准备登录韭研公社...[/bold blue]")
+    console.print(f"登录页: {login_url}")
+    console.print(f"状态目录: {user_data_dir}")
+
+    try:
+        ensure_logged_in(login_url, JYGSFetcher._check_login)
+    except Exception as exc:  # noqa: BLE001 - surfaced in CLI output.
+        console.print(f"[red]✗ 登录失败: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print("[bold green]✓ 登录状态已保存[/bold green]")
+
+
+@app.command("login")
+def login():
+    """打开浏览器完成登录并保存状态."""
+    _login_jygs()
 
 
 @agent_app.command("fetch")

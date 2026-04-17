@@ -16,11 +16,19 @@ LOG_FILE = DATA_DIR / "ztb.log"
 
 # 同花顺配置
 THS_QUERY_TEMPLATE = "{date_str}涨停，非ST"
+THS_SUMMARY_IMAGE_URL_TEMPLATE = (
+    "https://ozone.10jqka.com.cn/open/api/draw_lots/v1/rank/summary_image?date={date_str}"
+)
 
 # 韭研公社配置
 JYGS_BASE_URL = "https://www.jiuyangongshe.com/action/"
+JYGS_LOGIN_URL = "https://www.jiuyangongshe.com/"
 JYGS_CACHE_DIR = DATA_DIR / "jygs_cache"
 JYGS_CACHE_DIR.mkdir(exist_ok=True)
+THS_KIMI_CACHE_DIR = DATA_DIR / "ths_kimi_cache"
+THS_KIMI_CACHE_DIR.mkdir(exist_ok=True)
+JYGS_USER_DATA_DIR = DATA_DIR / "playwright" / "jygs"
+JYGS_USER_DATA_DIR.parent.mkdir(parents=True, exist_ok=True)
 
 # 分析报告
 REPORTS_DIR = DATA_DIR / "reports"
@@ -69,7 +77,6 @@ class Config:
         if env_value:
             return env_value
 
-        # 其次检查配置文件
         return self._config.get(key, default)
 
     def set(self, key: str, value: str) -> None:

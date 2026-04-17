@@ -2,7 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pandas as pd
 
 from typer.testing import CliRunner
 
@@ -151,6 +153,176 @@ class CliTest(unittest.TestCase):
         self.assertEqual(status["status"], "error")
         self.assertEqual(status["failed_stage"], "ths")
         generate_report.assert_not_called()
+
+    def test_run_single_fetch_marks_partial_when_ths_has_reconcile_warnings(self):
+        from ztb_fetcher.cli import _run_single_fetch
+
+        mock_db = Mock()
+        mock_calendar = Mock()
+        mock_calendar.is_trade_day.return_value = True
+        mock_fetcher = Mock()
+        mock_fetcher.fetch.return_value = (
+            pd.DataFrame([{"code": "600000"}]),
+            pd.DataFrame([{"code": "600000", "cate": "金融"}]),
+        )
+        mock_fetcher.last_fetch_metadata = {
+            "warnings": ["THS 图片分类缺少代码: 000001"],
+            "cate_count": 1,
+        }
+
+        with (
+            patch("ztb_fetcher.cli.THSFetcher", return_value=mock_fetcher),
+            patch("ztb_fetcher.cli._refresh_daily_hot_topics"),
+        ):
+            result = _run_single_fetch(mock_db, mock_calendar, "20260415", "ths")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["ths"]["cate_count"], 1)
+        self.assertIn("THS 图片分类缺少代码", result["warnings"][0])
+
+    def test_run_single_fetch_warns_when_jygs_returns_empty(self):
+        from ztb_fetcher.cli import _run_single_fetch
+
+        mock_db = Mock()
+        mock_calendar = Mock()
+        mock_calendar.is_trade_day.return_value = True
+        mock_ths_fetcher = Mock()
+        mock_ths_fetcher.fetch.return_value = (
+            pd.DataFrame([{"code": "600000"}]),
+            pd.DataFrame([{"code": "600000", "cate": "金融"}]),
+        )
+        mock_ths_fetcher.last_fetch_metadata = {"warnings": [], "cate_count": 1}
+        mock_jygs_fetcher = Mock()
+        mock_jygs_fetcher.fetch.return_value = pd.DataFrame()
+
+        with (
+            patch("ztb_fetcher.cli.THSFetcher", return_value=mock_ths_fetcher),
+            patch("ztb_fetcher.cli.JYGSFetcher", return_value=mock_jygs_fetcher),
+            patch("ztb_fetcher.cli._refresh_daily_hot_topics"),
+        ):
+            result = _run_single_fetch(mock_db, mock_calendar, "20260415", "all")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["jygs"]["status"], "error")
+        self.assertIn("请先运行 `ztb login`", result["warnings"][0])
+
+    def test_login_invokes_persistent_login_flow(self):
+        with patch("ztb_fetcher.cli.ensure_logged_in") as ensure_logged_in:
+            result = self.runner.invoke(app, ["login"])
+
+        self.assertEqual(result.exit_code, 0)
+        ensure_logged_in.assert_called_once()
+        self.assertIn("登录状态已保存", result.stdout)
+
+    def test_login_returns_nonzero_when_login_fails(self):
+        with patch("ztb_fetcher.cli.ensure_logged_in", side_effect=RuntimeError("boom")):
+            result = self.runner.invoke(app, ["login"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("登录失败", result.stdout)
+
+    def test_history_uses_latest_hot_topic_by_default(self):
+        mock_db = Mock()
+        mock_db.get_latest_hot_topic_date.return_value = "2026-04-07"
+        mock_db.get_hot_topics_by_date.return_value = pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-07",
+                    "topic": "固态电池",
+                    "appearance_count": 24,
+                    "stock_count": 14,
+                    "sample_stocks": "A、B",
+                    "rank": 1,
+                }
+            ]
+        )
+        mock_db.get_previous_hot_topic_occurrence.return_value = pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-03",
+                    "topic": "固态电池",
+                    "appearance_count": 10,
+                    "stock_count": 5,
+                    "sample_stocks": "C",
+                    "rank": 1,
+                }
+            ]
+        )
+        mock_db.get_hot_topic_stocks.side_effect = [
+            pd.DataFrame([{"name": "德福科技"}, {"name": "上海洗霸"}]),
+            pd.DataFrame([{"name": "领湃科技"}]),
+        ]
+
+        with patch("ztb_fetcher.cli.Database", return_value=mock_db):
+            result = self.runner.invoke(app, ["history"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("固态电池", result.stdout)
+        self.assertIn("2026-04-03", result.stdout)
+        self.assertIn("德福科技", result.stdout)
+
+    def test_history_topic_falls_back_to_latest_occurrence(self):
+        mock_db = Mock()
+        mock_db.get_latest_hot_topic_date.return_value = "2026-04-07"
+        mock_db.get_hot_topic_by_date.return_value = pd.DataFrame()
+        mock_db.get_latest_hot_topic_occurrence.return_value = pd.DataFrame(
+            [
+                {
+                    "date": "2026-04-02",
+                    "topic": "固态电池",
+                    "appearance_count": 12,
+                    "stock_count": 6,
+                    "sample_stocks": "C",
+                    "rank": 1,
+                }
+            ]
+        )
+        mock_db.get_previous_hot_topic_occurrence.return_value = pd.DataFrame()
+        mock_db.get_hot_topic_stocks.return_value = pd.DataFrame([{"name": "领湃科技"}])
+
+        with patch("ztb_fetcher.cli.Database", return_value=mock_db):
+            result = self.runner.invoke(app, ["history", "-p", "固态电池"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("当日未出现", result.stdout)
+        self.assertIn("2026-04-02", result.stdout)
+
+    def test_backfill_topics_rebuilds_all_reason_dates(self):
+        mock_db = Mock()
+        mock_db.get_reason_dates.return_value = [
+            pd.Timestamp("2026-04-01").date(),
+            pd.Timestamp("2026-04-02").date(),
+        ]
+
+        with (
+            patch("ztb_fetcher.cli.Database", return_value=mock_db),
+            patch("ztb_fetcher.cli._refresh_daily_hot_topics") as refresh_daily_hot_topics,
+        ):
+            result = self.runner.invoke(app, ["backfill-topics"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(refresh_daily_hot_topics.call_count, 2)
+        self.assertIn("已处理 2/2 天", result.stdout)
+
+    def test_backfill_topics_returns_nonzero_on_partial_failure(self):
+        mock_db = Mock()
+        mock_db.get_reason_dates.return_value = [
+            pd.Timestamp("2026-04-01").date(),
+            pd.Timestamp("2026-04-02").date(),
+        ]
+
+        def _side_effect(_db, date_str):
+            if date_str == "20260402":
+                raise RuntimeError("boom")
+
+        with (
+            patch("ztb_fetcher.cli.Database", return_value=mock_db),
+            patch("ztb_fetcher.cli._refresh_daily_hot_topics", side_effect=_side_effect),
+        ):
+            result = self.runner.invoke(app, ["backfill-topics"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("20260402", result.stdout)
 
 
 if __name__ == "__main__":

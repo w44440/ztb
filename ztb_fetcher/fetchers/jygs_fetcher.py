@@ -19,7 +19,7 @@ from ztb_fetcher.utils.error_handler import (
     PlaywrightBrowserError,
     PlaywrightNavigationError,
 )
-from ztb_fetcher.utils.playwright_util import get_data_cdp
+from ztb_fetcher.utils.playwright_util import get_data_persistent
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,9 @@ _cache = CacheManager(JYGS_CACHE_DIR, use_monthly_subfolder=True)
 
 class JYGSFetcher:
     """韭研公社数据抓取器"""
+
+    _NON_AUTH_COOKIE_NAMES = {"HMACCOUNT", "time"}
+    _NON_AUTH_COOKIE_PREFIXES = ("Hm_",)
 
     def __init__(self, db: Database):
         self.db = db
@@ -60,10 +63,10 @@ class JYGSFetcher:
                 self._save_to_db(df, formatted_date)
                 return df
 
-        # 使用 Playwright CDP 模式抓取
+        # 使用 Playwright 持久化上下文抓取
         try:
             fetch_data = partial(self._fetch_single_day, formatted_date)
-            texts = get_data_cdp(JYGS_BASE_URL, fetch_data, self._check_login)
+            texts = get_data_persistent(JYGS_BASE_URL, fetch_data, self._check_login)
 
             if texts and texts[0]:
                 df = self._parse_data(texts[0].split("\n"), formatted_date, filter_codes)
@@ -274,7 +277,30 @@ class JYGSFetcher:
         """检查是否已登录韭研公社"""
         try:
             page.wait_for_load_state("networkidle")
-            login_button = page.query_selector('button:has-text("登录")')
-            return login_button is None
+            login_markers = [
+                page.get_by_text("登录").first,
+                page.get_by_text("注册").first,
+                page.locator('button:has-text("登录")').first,
+                page.locator('a:has-text("登录")').first,
+                page.locator('a:has-text("注册")').first,
+            ]
+            for locator in login_markers:
+                try:
+                    if locator.is_visible(timeout=1000):
+                        return False
+                except Exception:
+                    continue
+
+            cookies = page.context.cookies(["https://www.jiuyangongshe.com/"])
+            for cookie in cookies:
+                name = str(cookie.get("name") or "")
+                if not name:
+                    continue
+                if name in JYGSFetcher._NON_AUTH_COOKIE_NAMES:
+                    continue
+                if any(name.startswith(prefix) for prefix in JYGSFetcher._NON_AUTH_COOKIE_PREFIXES):
+                    continue
+                return True
+            return False
         except Exception:
             return False

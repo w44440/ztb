@@ -79,6 +79,30 @@ class Database:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_hot_topics (
+                date DATE NOT NULL,
+                topic VARCHAR NOT NULL,
+                appearance_count INTEGER NOT NULL,
+                stock_count INTEGER NOT NULL,
+                sample_stocks VARCHAR,
+                rank INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (date, topic)
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_hot_topic_stocks (
+                date DATE NOT NULL,
+                topic VARCHAR NOT NULL,
+                code VARCHAR NOT NULL,
+                name VARCHAR NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (date, topic, code)
+            )
+        """)
+
         conn.close()
 
     def save_zt_stocks(self, df: pd.DataFrame):
@@ -166,6 +190,40 @@ class Database:
         finally:
             conn.close()
 
+    def save_daily_hot_topics(
+        self,
+        date_val: date,
+        summary_df: pd.DataFrame,
+        stock_df: pd.DataFrame,
+    ) -> None:
+        """保存单日热点汇总和热点股票明细。"""
+        conn = self._get_connection()
+        try:
+            conn.execute("DELETE FROM daily_hot_topic_stocks WHERE date = ?", [date_val])
+            conn.execute("DELETE FROM daily_hot_topics WHERE date = ?", [date_val])
+
+            if not summary_df.empty:
+                conn.execute(
+                    """
+                    INSERT INTO daily_hot_topics
+                    (date, topic, appearance_count, stock_count, sample_stocks, rank)
+                    SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                    FROM summary_df
+                    """
+                )
+
+            if not stock_df.empty:
+                conn.execute(
+                    """
+                    INSERT INTO daily_hot_topic_stocks
+                    (date, topic, code, name)
+                    SELECT date, topic, code, name
+                    FROM stock_df
+                    """
+                )
+        finally:
+            conn.close()
+
     def query_zt_stocks(self, date_val: Optional[date] = None) -> pd.DataFrame:
         """查询涨停股票数据"""
         conn = self._get_connection()
@@ -179,6 +237,113 @@ class Database:
                     "SELECT * FROM zt_stocks ORDER BY date DESC, lianban_days DESC"
                 ).fetchdf()
             return result
+        finally:
+            conn.close()
+
+    def get_latest_hot_topic_date(self) -> Optional[date]:
+        """获取最新一个有热点数据的日期。"""
+        conn = self._get_connection()
+        try:
+            result = conn.execute("SELECT MAX(date) FROM daily_hot_topics").fetchone()
+            return result[0] if result else None
+        finally:
+            conn.close()
+
+    def get_hot_topics_by_date(self, date_val: date) -> pd.DataFrame:
+        """获取指定日期的热点汇总。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                FROM daily_hot_topics
+                WHERE date = ?
+                ORDER BY rank ASC, topic ASC
+                """,
+                [date_val],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+    def get_hot_topics_in_range(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """获取日期范围内的热点汇总。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                FROM daily_hot_topics
+                WHERE date BETWEEN ? AND ?
+                ORDER BY date DESC, rank ASC, topic ASC
+                """,
+                [start_date, end_date],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+    def get_hot_topic_by_date(self, date_val: date, topic: str) -> pd.DataFrame:
+        """获取指定日期和热点词的汇总。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                FROM daily_hot_topics
+                WHERE date = ? AND topic = ?
+                ORDER BY rank ASC
+                """,
+                [date_val, topic],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+    def get_latest_hot_topic_occurrence(self, topic: str, on_or_before: date) -> pd.DataFrame:
+        """获取某热点截至指定日期最近一次出现。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                FROM daily_hot_topics
+                WHERE topic = ? AND date <= ?
+                ORDER BY date DESC
+                LIMIT 1
+                """,
+                [topic, on_or_before],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+    def get_previous_hot_topic_occurrence(self, topic: str, before_date: date) -> pd.DataFrame:
+        """获取某热点在指定日期之前最近一次出现。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, appearance_count, stock_count, sample_stocks, rank
+                FROM daily_hot_topics
+                WHERE topic = ? AND date < ?
+                ORDER BY date DESC
+                LIMIT 1
+                """,
+                [topic, before_date],
+            ).fetchdf()
+        finally:
+            conn.close()
+
+    def get_hot_topic_stocks(self, date_val: date, topic: str) -> pd.DataFrame:
+        """获取指定日期某热点对应股票。"""
+        conn = self._get_connection()
+        try:
+            return conn.execute(
+                """
+                SELECT date, topic, code, name
+                FROM daily_hot_topic_stocks
+                WHERE date = ? AND topic = ?
+                ORDER BY code ASC, name ASC
+                """,
+                [date_val, topic],
+            ).fetchdf()
         finally:
             conn.close()
 
@@ -201,6 +366,21 @@ class Database:
             sql += " ORDER BY date DESC"
             result = conn.execute(sql, params).fetchdf()
             return result
+        finally:
+            conn.close()
+
+    def get_reason_dates(self) -> list[date]:
+        """获取所有有理由数据的日期。"""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT date
+                FROM zt_reasons
+                ORDER BY date ASC
+                """
+            ).fetchall()
+            return [row[0] for row in rows]
         finally:
             conn.close()
 
