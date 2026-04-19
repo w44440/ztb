@@ -552,6 +552,9 @@ def fetch(
             report_error = f"报告生成失败: {exc}"
             console.print(f"  [yellow]! {latest_trade_result['date']}: {report_error}[/yellow]")
 
+    console.print()
+    console.print("[bold blue]推送企业微信...[/bold blue]")
+
     status_payload = _build_fetch_status_payload(fetch_result, report_path, report_error)
     notify_warnings = notify_fetch_result(status_payload)
     status_payload = _build_fetch_status_payload(
@@ -564,6 +567,8 @@ def fetch(
 
     if notify_warnings:
         console.print(f"  [yellow]! {'; '.join(notify_warnings)}[/yellow]")
+    else:
+        console.print("  [green]✓[/green] 企业微信推送完成")
 
     if status_payload["status"] == "error":
         raise typer.Exit(code=1)

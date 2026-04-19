@@ -1,6 +1,6 @@
 """同花顺涨停数据抓取模块.
 
-使用 pywencai 库获取涨停数据，并缓存 Kimi 分类结果。
+使用 pywencai 库获取涨停数据，并缓存本地 OCR 分类结果。
 """
 
 import json
@@ -16,21 +16,21 @@ import pandas as pd
 import pywencai
 
 from ztb_fetcher.config import (
-    THS_KIMI_CACHE_DIR,
+    THS_OCR_CACHE_DIR,
     THS_QUERY_TEMPLATE,
     THS_SUMMARY_IMAGE_URL_TEMPLATE,
     get_config,
 )
 from ztb_fetcher.database import Database
-from ztb_fetcher.utils.cache_manager import CacheManager
-from ztb_fetcher.utils.deepseek_ocr import (
-    DeepSeekOCRError,
+from ztb_fetcher.ocr.local import (
+    LocalOCRError,
     extract_summary_stock_categories_from_image,
 )
+from ztb_fetcher.utils.cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
-_summary_cache = CacheManager(THS_KIMI_CACHE_DIR)
-_SUMMARY_CACHE_VERSION = 2
+_summary_cache = CacheManager(THS_OCR_CACHE_DIR)
+_SUMMARY_CACHE_VERSION = 4
 
 
 class THSTemporaryFetchError(RuntimeError):
@@ -120,7 +120,9 @@ class THSFetcher:
         try:
             df = pywencai.get(query=query, sort_key="成交金额", sort_order="desc", loop=True)
             if df is None:
-                raise THSTemporaryFetchError("pywencai 返回空结果，可能是接口临时异常或当日数据尚未生成")
+                raise THSTemporaryFetchError(
+                    "pywencai 返回空结果，可能是接口临时异常或当日数据尚未生成"
+                )
 
             if df.empty:
                 logger.warning(f"[THS] {date_str} 无涨停数据")
@@ -242,19 +244,19 @@ class THSFetcher:
 
         cache_payload = self._load_summary_cache(date_str, expected_candidate_count=len(stocks_df))
         if cache_payload is not None:
-            logger.info(f"[THS] 命中 Kimi 分类缓存: {date_str}")
+            logger.info(f"[THS] 命中本地 OCR 分类缓存: {date_str}")
             self.last_fetch_metadata["summary_cache_hit"] = True
             recognized_rows = cache_payload.get("recognized_rows") or []
         else:
             try:
                 logger.info(f"[THS] 开始下载 {date_str} 分类图片")
                 image_bytes, content_type = self._download_summary_image(date_str)
-                logger.info(f"[THS] 开始 Kimi 图片结构化: {date_str}")
+                logger.info(f"[THS] 开始本地 OCR 图片解析: {date_str}")
                 recognized_rows = extract_summary_stock_categories_from_image(
                     image_bytes, content_type, stocks_df, date_str
                 )
-            except (DeepSeekOCRError, RuntimeError, TimeoutError, socket.timeout) as exc:
-                self._append_warning(f"THS 图片结构化失败: {exc}")
+            except (LocalOCRError, RuntimeError, TimeoutError, socket.timeout) as exc:
+                self._append_warning(f"THS 图片 OCR 解析失败: {exc}")
                 return reasons_df
 
             self._save_summary_cache(date_str, len(stocks_df), recognized_rows)
@@ -293,12 +295,18 @@ class THSFetcher:
         self.last_fetch_metadata["cate_count"] = int(enriched_df["cate"].fillna("").ne("").sum())
         return enriched_df
 
-    def _build_cate_map(self, recognized_df: pd.DataFrame, reasons_df: pd.DataFrame) -> dict[str, str]:
+    def _build_cate_map(
+        self, recognized_df: pd.DataFrame, reasons_df: pd.DataFrame
+    ) -> dict[str, str]:
         code_to_codes = (
-            reasons_df.groupby(reasons_df["code"].astype(str))["code"].agg(lambda values: list(values.unique()))
+            reasons_df.groupby(reasons_df["code"].astype(str))["code"].agg(
+                lambda values: list(values.unique())
+            )
         ).to_dict()
         name_to_codes = (
-            reasons_df.groupby(reasons_df["name"].astype(str))["code"].agg(lambda values: list(values.unique()))
+            reasons_df.groupby(reasons_df["name"].astype(str))["code"].agg(
+                lambda values: list(values.unique())
+            )
         ).to_dict()
 
         cate_map: dict[str, str] = {}
@@ -357,20 +365,20 @@ class THSFetcher:
         try:
             payload = json.loads(cached_text)
         except json.JSONDecodeError:
-            logger.warning(f"[THS] Kimi 分类缓存损坏，忽略: {date_str}")
+            logger.warning(f"[THS] OCR 分类缓存损坏，忽略: {date_str}")
             return None
 
         if not isinstance(payload, dict):
             return None
 
         if payload.get("version") != _SUMMARY_CACHE_VERSION:
-            logger.info(f"[THS] Kimi 分类缓存版本不匹配，忽略: {date_str}")
+            logger.info(f"[THS] OCR 分类缓存版本不匹配，忽略: {date_str}")
             return None
 
         candidate_count = payload.get("candidate_count")
         if candidate_count != expected_candidate_count:
             logger.info(
-                f"[THS] Kimi 分类缓存候选数量不匹配，忽略: {date_str} cache={candidate_count} current={expected_candidate_count}"
+                f"[THS] OCR 分类缓存候选数量不匹配，忽略: {date_str} cache={candidate_count} current={expected_candidate_count}"
             )
             return None
 

@@ -1,17 +1,11 @@
 import json
-import os
-import socket
 import unittest
 from unittest.mock import Mock, patch
-from urllib import error
 
 import pandas as pd
 
 from ztb_fetcher.fetchers.ths_fetcher import THSFetcher
-from ztb_fetcher.utils.deepseek_ocr import (
-    DeepSeekOCRError,
-    extract_summary_stock_categories_from_image,
-)
+from ztb_fetcher.ocr.local import LocalOCRError
 
 
 def _sample_wencai_df() -> pd.DataFrame:
@@ -45,20 +39,6 @@ def _sample_wencai_df() -> pd.DataFrame:
     )
 
 
-class _FakeHTTPResponse:
-    def __init__(self, payload: dict):
-        self.payload = payload
-
-    def read(self):
-        return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-
 class THSFetcherTest(unittest.TestCase):
     def setUp(self):
         self.load_cache_patcher = patch(
@@ -80,7 +60,9 @@ class THSFetcherTest(unittest.TestCase):
         fetcher = THSFetcher(db)
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch.object(fetcher, "_download_summary_image", return_value=(b"img", "image/png")),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.extract_summary_stock_categories_from_image",
@@ -104,13 +86,13 @@ class THSFetcherTest(unittest.TestCase):
         db.save_zt_stocks.assert_called_once()
         db.save_zt_reasons.assert_called_once()
 
-    def test_fetch_uses_cached_kimi_result_without_model_calls(self):
+    def test_fetch_uses_cached_ocr_result_without_model_calls(self):
         self.load_cache_patcher.stop()
         self.save_cache_patcher.stop()
         db = Mock()
         fetcher = THSFetcher(db)
         cached_payload = {
-            "version": 2,
+            "version": 4,
             "candidate_count": 2,
             "recognized_rows": [
                 {"code": "600000", "name": "浦发银行", "cate": "金融"},
@@ -119,7 +101,9 @@ class THSFetcherTest(unittest.TestCase):
         }
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher._summary_cache.get",
                 return_value=json.dumps(cached_payload, ensure_ascii=False),
@@ -138,21 +122,21 @@ class THSFetcherTest(unittest.TestCase):
         download_image.assert_not_called()
         extract.assert_not_called()
 
-    def test_fetch_saves_kimi_result_to_cache_after_success(self):
+    def test_fetch_saves_ocr_result_to_cache_after_success(self):
         self.load_cache_patcher.stop()
         self.save_cache_patcher.stop()
         db = Mock()
         fetcher = THSFetcher(db)
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.THSFetcher._load_summary_cache",
                 return_value=None,
             ),
-            patch(
-                "ztb_fetcher.fetchers.ths_fetcher.THSFetcher._save_summary_cache"
-            ) as save_cache,
+            patch("ztb_fetcher.fetchers.ths_fetcher.THSFetcher._save_summary_cache") as save_cache,
             patch.object(fetcher, "_download_summary_image", return_value=(b"img", "image/png")),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.extract_summary_stock_categories_from_image",
@@ -178,7 +162,9 @@ class THSFetcherTest(unittest.TestCase):
         }
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher._summary_cache.get",
                 return_value=json.dumps(legacy_payload, ensure_ascii=False),
@@ -198,7 +184,9 @@ class THSFetcherTest(unittest.TestCase):
         fetcher = THSFetcher(db)
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch.object(fetcher, "_download_summary_image", return_value=(b"img", "image/png")),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.extract_summary_stock_categories_from_image",
@@ -221,25 +209,29 @@ class THSFetcherTest(unittest.TestCase):
         fetcher = THSFetcher(db)
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch.object(fetcher, "_download_summary_image", return_value=(b"img", "image/png")),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.extract_summary_stock_categories_from_image",
-                side_effect=DeepSeekOCRError("kimi down"),
+                side_effect=LocalOCRError("paddle down"),
             ),
         ):
             _stocks_df, reasons_df = fetcher.fetch("20260415")
 
         self.assertTrue(reasons_df["cate"].isna().all())
         self.assertEqual(fetcher.last_fetch_metadata["cate_count"], 0)
-        self.assertIn("THS 图片结构化失败: kimi down", fetcher.last_fetch_metadata["warnings"])
+        self.assertIn("THS 图片 OCR 解析失败: paddle down", fetcher.last_fetch_metadata["warnings"])
 
     def test_fetch_keeps_ths_success_when_image_structuring_times_out(self):
         db = Mock()
         fetcher = THSFetcher(db)
 
         with (
-            patch("ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()),
+            patch(
+                "ztb_fetcher.fetchers.ths_fetcher.pywencai.get", return_value=_sample_wencai_df()
+            ),
             patch.object(fetcher, "_download_summary_image", return_value=(b"img", "image/png")),
             patch(
                 "ztb_fetcher.fetchers.ths_fetcher.extract_summary_stock_categories_from_image",
@@ -250,125 +242,9 @@ class THSFetcherTest(unittest.TestCase):
 
         self.assertEqual(len(stocks_df), 2)
         self.assertTrue(reasons_df["cate"].isna().all())
-        self.assertIn("THS 图片结构化失败: timed out", fetcher.last_fetch_metadata["warnings"])
+        self.assertIn("THS 图片 OCR 解析失败: timed out", fetcher.last_fetch_metadata["warnings"])
         db.save_zt_stocks.assert_called_once()
         db.save_zt_reasons.assert_called_once()
-
-
-class DeepSeekOCRTest(unittest.TestCase):
-    def test_extract_summary_stock_categories_from_image_uses_kimi_chat_completions(self):
-        captured = {}
-        stocks_df = pd.DataFrame(
-            [{"code": "600000", "name": "浦发银行"}, {"code": "000001", "name": "平安银行"}]
-        )
-
-        def _fake_urlopen(req, timeout):
-            captured["url"] = req.full_url
-            captured["payload"] = json.loads(req.data.decode("utf-8"))
-            captured["timeout"] = timeout
-            return _FakeHTTPResponse(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": '```json\n[{"code":"600000","name":"浦发银行","cate":"金融"}]\n```'
-                            }
-                        }
-                    ]
-                }
-            )
-
-        with (
-            patch("ztb_fetcher.utils.deepseek_ocr.get_config") as get_config,
-            patch("ztb_fetcher.utils.deepseek_ocr.request.urlopen", side_effect=_fake_urlopen),
-            patch.dict(os.environ, {"MOONSHOT_API_KEY": "test-key"}, clear=True),
-        ):
-            get_config.side_effect = lambda key, default=None: {
-                "kimi_model": "kimi-k2.5",
-                "kimi_base_url": "https://api.moonshot.cn/v1",
-            }.get(key, default)
-            result = extract_summary_stock_categories_from_image(
-                b"fake", "image/png", stocks_df, "20260415"
-            )
-
-        self.assertEqual(result, [{"code": "600000", "name": "浦发银行", "cate": "金融"}])
-        self.assertEqual(captured["url"], "https://api.moonshot.cn/v1/chat/completions")
-        self.assertEqual(captured["payload"]["model"], "kimi-k2.5")
-        self.assertEqual(captured["payload"]["thinking"], {"type": "disabled"})
-        self.assertEqual(captured["payload"]["messages"][1]["content"][0]["type"], "image_url")
-        self.assertTrue(
-            captured["payload"]["messages"][1]["content"][0]["image_url"]["url"].startswith(
-                "data:image/png;base64,"
-            )
-        )
-        self.assertIn("候选股票列表", captured["payload"]["messages"][1]["content"][1]["text"])
-        self.assertEqual(captured["timeout"], 180)
-
-    def test_extract_summary_stock_categories_from_image_raises_for_invalid_json(self):
-        stocks_df = pd.DataFrame([{"code": "600000", "name": "浦发银行"}])
-
-        with (
-            patch("ztb_fetcher.utils.deepseek_ocr.get_config") as get_config,
-            patch(
-                "ztb_fetcher.utils.deepseek_ocr.request.urlopen",
-                return_value=_FakeHTTPResponse(
-                    {"choices": [{"message": {"content": "not json"}}]}
-                ),
-            ),
-            patch.dict(os.environ, {"MOONSHOT_API_KEY": "test-key"}, clear=True),
-        ):
-            get_config.side_effect = lambda key, default=None: {
-                "kimi_model": "kimi-k2.5",
-                "kimi_base_url": "https://api.moonshot.cn/v1",
-            }.get(key, default)
-            with self.assertRaisesRegex(DeepSeekOCRError, "模型未返回有效 JSON"):
-                extract_summary_stock_categories_from_image(
-                    b"fake", "image/png", stocks_df, "20260415"
-                )
-
-    def test_extract_summary_stock_categories_from_image_raises_http_error(self):
-        stocks_df = pd.DataFrame([{"code": "600000", "name": "浦发银行"}])
-
-        with (
-            patch("ztb_fetcher.utils.deepseek_ocr.get_config") as get_config,
-            patch(
-                "ztb_fetcher.utils.deepseek_ocr.request.urlopen",
-                side_effect=error.HTTPError(
-                    url="https://api.moonshot.cn/v1/chat/completions",
-                    code=500,
-                    msg="boom",
-                    hdrs=None,
-                    fp=None,
-                ),
-            ),
-            patch.dict(os.environ, {"MOONSHOT_API_KEY": "test-key"}, clear=True),
-        ):
-            get_config.side_effect = lambda key, default=None: {
-                "kimi_base_url": "https://api.moonshot.cn/v1",
-                "kimi_model": "kimi-k2.5",
-            }.get(key, default)
-            with self.assertRaisesRegex(DeepSeekOCRError, "Kimi 图片结构化 HTTP 500"):
-                extract_summary_stock_categories_from_image(
-                    b"fake", "image/png", stocks_df, "20260415"
-                )
-
-    def test_extract_summary_stock_categories_from_image_raises_timeout_error(self):
-        stocks_df = pd.DataFrame([{"code": "600000", "name": "浦发银行"}])
-
-        with (
-            patch("ztb_fetcher.utils.deepseek_ocr.get_config") as get_config,
-            patch("ztb_fetcher.utils.deepseek_ocr.request.urlopen") as urlopen,
-            patch.dict(os.environ, {"MOONSHOT_API_KEY": "test-key"}, clear=True),
-        ):
-            urlopen.side_effect = socket.timeout("timed out")
-            get_config.side_effect = lambda key, default=None: {
-                "kimi_base_url": "https://api.moonshot.cn/v1",
-                "kimi_model": "kimi-k2.5",
-            }.get(key, default)
-            with self.assertRaisesRegex(DeepSeekOCRError, "Kimi 图片结构化 网络错误: timed out"):
-                extract_summary_stock_categories_from_image(
-                    b"fake", "image/png", stocks_df, "20260415"
-                )
 
 
 if __name__ == "__main__":

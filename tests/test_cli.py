@@ -104,6 +104,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(status["failed_stage"], "notify")
         self.assertEqual(status["report"], str(Path(tmp_dir) / "report.png"))
         self.assertIn("企业微信文本通知失败", status["warnings"][0])
+        self.assertIn("推送企业微信", result.stdout)
+        self.assertIn("企业微信文本通知失败", result.stdout)
 
     def test_fetch_writes_error_status_for_ths_failure(self):
         fetch_payload = {

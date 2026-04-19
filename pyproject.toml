@@ -2,7 +2,7 @@
 name = "ztb-fetcher"
 version = "0.1.0"
 description = "涨停板数据抓取软件 - 整合同花顺和韭研公社数据源"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "pywencai",
     "pandas",
@@ -13,6 +13,8 @@ dependencies = [
     "rich",
     "akshare",
     "matplotlib>=3.10.8",
+    "paddleocr",
+    "pillow",
 ]
 
 [project.scripts]

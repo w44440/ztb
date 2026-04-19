@@ -25,8 +25,8 @@ JYGS_BASE_URL = "https://www.jiuyangongshe.com/action/"
 JYGS_LOGIN_URL = "https://www.jiuyangongshe.com/"
 JYGS_CACHE_DIR = DATA_DIR / "jygs_cache"
 JYGS_CACHE_DIR.mkdir(exist_ok=True)
-THS_KIMI_CACHE_DIR = DATA_DIR / "ths_kimi_cache"
-THS_KIMI_CACHE_DIR.mkdir(exist_ok=True)
+THS_OCR_CACHE_DIR = DATA_DIR / "ths_ocr_cache"
+THS_OCR_CACHE_DIR.mkdir(exist_ok=True)
 JYGS_USER_DATA_DIR = DATA_DIR / "playwright" / "jygs"
 JYGS_USER_DATA_DIR.parent.mkdir(parents=True, exist_ok=True)
 
