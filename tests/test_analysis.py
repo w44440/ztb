@@ -15,7 +15,12 @@ class AnalysisTest(unittest.TestCase):
     def test_build_daily_hot_topics_returns_summary_and_stocks(self):
         reasons_df = pd.DataFrame(
             [
-                {"code": "000001", "name": "平安银行", "cate": "固态电池", "reason": "固态电池 储能"},
+                {
+                    "code": "000001",
+                    "name": "平安银行",
+                    "cate": "固态电池",
+                    "reason": "固态电池 储能",
+                },
                 {"code": "000002", "name": "万科A", "cate": "固态电池", "reason": "新能源"},
             ]
         )
@@ -40,17 +45,19 @@ class AnalysisTest(unittest.TestCase):
 
             def get_hot_topics_by_date(self, date_val):
                 self.requested_date = date_val
-                return pd.DataFrame([
-                    {
-                        "date": date_val,
-                        "topic": f"题材{i}",
-                        "appearance_count": 20 - i,
-                        "stock_count": 10 - (i % 3),
-                        "sample_stocks": "样例A、样例B",
-                        "rank": i,
-                    }
-                    for i in range(1, 13)
-                ])
+                return pd.DataFrame(
+                    [
+                        {
+                            "date": date_val,
+                            "topic": f"题材{i}",
+                            "appearance_count": 20 - i,
+                            "stock_count": 10 - (i % 3),
+                            "sample_stocks": "样例A、样例B",
+                            "rank": i,
+                        }
+                        for i in range(1, 13)
+                    ]
+                )
 
             def query_zt_reasons(self, date_val=None):
                 raise AssertionError("unexpected fallback")
@@ -65,8 +72,9 @@ class AnalysisTest(unittest.TestCase):
                 captured["keywords_df"] = keywords_df.copy()
                 captured["path"] = path
 
-            with patch("ztb_fetcher.analysis.REPORTS_DIR", Path(tmp_dir)), patch(
-                "ztb_fetcher.analysis._plot_report", side_effect=_fake_plot
+            with (
+                patch("ztb_fetcher.analysis.REPORTS_DIR", Path(tmp_dir)),
+                patch("ztb_fetcher.analysis._plot_report", side_effect=_fake_plot),
             ):
                 result = generate_report(stub_db, "20260416", days=10)
 
@@ -109,11 +117,13 @@ class AnalysisTest(unittest.TestCase):
         captured = {}
 
         with TemporaryDirectory() as tmp_dir:
+
             def _fake_plot(lianban_df, trend_df, keywords_df, date_str, path):
                 captured["keywords_df"] = keywords_df.copy()
 
-            with patch("ztb_fetcher.analysis.REPORTS_DIR", Path(tmp_dir)), patch(
-                "ztb_fetcher.analysis._plot_report", side_effect=_fake_plot
+            with (
+                patch("ztb_fetcher.analysis.REPORTS_DIR", Path(tmp_dir)),
+                patch("ztb_fetcher.analysis._plot_report", side_effect=_fake_plot),
             ):
                 generate_report(stub_db, "20260416", days=10)
 
