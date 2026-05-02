@@ -15,6 +15,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "paddleocr",
     "pillow",
+    "boto3",
 ]
 
 [project.scripts]
@@ -27,7 +28,7 @@ package = true  # 加上这一行，告诉 uv 把当前目录当成一个包处�
 [tool.setuptools]
 py-modules = ["main"]      # 明确包含根目录下的 main.py
 # 自动发现 ztb_fetcher 及其所有子包
-packages = { find = { where = ["."], include = ["ztb_fetcher*"] } }
+packages = { find = { where = ["."], include = ["ztb_fetcher*", "web_state_store*"] } }
 
 # 推荐使用这种方式配置主镜像源
 [[tool.uv.index]]

@@ -3,8 +3,10 @@
 ## Project Facts
 
 - 仓库根目录包含 `ztb` CLI 项目
+- 主运行数据默认写入 HDD `/data/ops-data/ztb`，包含 DuckDB、缓存、报告、JYGS storage_state、日志和最近运行状态
+- JYGS 登录态文件默认位于 `/data/ops-data/ztb/auth/jygs_storage_state.json`，由 `ztb fetch` 内部自动下载和校验
 - 项目核心命令分为两类：
-  - `ztb fetch`：自动化入口，抓取、生成报告、尝试推送企业微信，并写入 `~/.ztb/data/last_run.json`
+  - `ztb fetch`：自动化入口，抓取、生成报告、尝试推送企业微信，并写入 `/data/ops-data/ztb/last_run.json`
   - `ztb agent ...`：agent 入口，默认结构化、低副作用
 
 ## Important Commands
@@ -18,7 +20,7 @@
 
 ## Status File Semantics
 
-- `~/.ztb/data/last_run.json` 只描述最近一次顶层 `ztb fetch` 的结果
+- `/data/ops-data/ztb/last_run.json` 只描述最近一次顶层 `ztb fetch` 的结果
 - 这个状态文件重点用于：
   - 判断抓取是否成功
   - 区分 `ok / partial / error / skipped`

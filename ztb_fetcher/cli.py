@@ -11,15 +11,22 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.table import Table
+from web_state_store import (
+    StateStoreError,
+    capture_state,
+    check_state,
+    download_state,
+    get_state_path,
+    upload_state,
+)
 
 from ztb_fetcher.analysis import _tokenize_reasons, build_daily_hot_topics, generate_report
 from ztb_fetcher.calendar import TradingCalendar
-from ztb_fetcher.config import JYGS_LOGIN_URL, JYGS_USER_DATA_DIR, LOG_FILE, STATUS_FILE, get_config
+from ztb_fetcher.config import JYGS_LOGIN_URL, LOG_FILE, STATUS_FILE, get_config
 from ztb_fetcher.database import Database
 from ztb_fetcher.fetchers.jygs_fetcher import JYGSFetcher
 from ztb_fetcher.fetchers.ths_fetcher import THSFetcher
 from ztb_fetcher.notifier import notify_fetch_result
-from ztb_fetcher.utils.playwright_util import ensure_logged_in
 
 
 def _setup_logging():
@@ -35,7 +42,9 @@ _setup_logging()
 
 app = typer.Typer(help="涨停板数据抓取软件")
 agent_app = typer.Typer(help="面向 agent 的结构化命令")
+auth_app = typer.Typer(help="网站登录态同步命令")
 app.add_typer(agent_app, name="agent")
+app.add_typer(auth_app, name="auth")
 console = Console()
 
 
@@ -745,28 +754,69 @@ def query(
     console.print(f"  韭研公社涨停原因: {len(reasons_jygs)} 条")
 
 
-def _login_jygs() -> None:
-    """打开浏览器完成韭研公社登录并保存状态."""
+def _login_jygs(timeout: int = 600) -> None:
+    """打开浏览器完成韭研公社登录并保存 storage_state。"""
     login_url = get_config("jygs_login_url", JYGS_LOGIN_URL)
-    user_data_dir = Path(get_config("jygs_user_data_dir", str(JYGS_USER_DATA_DIR))).expanduser()
+    state_path = get_state_path()
 
     console.print("[bold blue]准备登录韭研公社...[/bold blue]")
     console.print(f"登录页: {login_url}")
-    console.print(f"状态目录: {user_data_dir}")
+    console.print(f"状态文件: {state_path}")
 
     try:
-        ensure_logged_in(login_url, JYGSFetcher._check_login)
+        capture_state(
+            "jygs",
+            path=state_path,
+            login_timeout_seconds=timeout,
+            check_login_func=JYGSFetcher._check_login,
+        )
     except Exception as exc:  # noqa: BLE001 - surfaced in CLI output.
         console.print(f"[red]✗ 登录失败: {exc}[/red]")
         raise typer.Exit(code=1)
 
-    console.print("[bold green]✓ 登录状态已保存[/bold green]")
+    console.print("[bold green]✓ 登录状态文件已保存[/bold green]")
 
 
 @app.command("login")
-def login():
+def login(
+    timeout: int = typer.Option(600, "--timeout", help="等待手动登录的超时时间（秒）"),
+):
     """打开浏览器完成登录并保存状态."""
-    _login_jygs()
+    _login_jygs(timeout=timeout)
+
+
+@auth_app.command("upload-jygs-state")
+def auth_upload_jygs_state():
+    """校验并上传 JYGS 登录态文件到对象存储."""
+    try:
+        upload_state("jygs")
+    except StateStoreError as exc:
+        console.print(f"[red]✗ 上传失败: {exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[bold green]✓ 已上传 JYGS 状态文件: {get_state_path()}[/bold green]")
+
+
+@auth_app.command("download-jygs-state")
+def auth_download_jygs_state():
+    """从对象存储下载并校验 JYGS 登录态文件."""
+    try:
+        path = download_state("jygs")
+        check_state("jygs", path=path)
+    except StateStoreError as exc:
+        console.print(f"[red]✗ 下载或校验失败: {exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[bold green]✓ 已下载并校验 JYGS 状态文件: {path}[/bold green]")
+
+
+@auth_app.command("check-jygs-state")
+def auth_check_jygs_state():
+    """校验本地 JYGS 登录态文件是否有效."""
+    try:
+        check_state("jygs")
+    except StateStoreError as exc:
+        console.print(f"[red]✗ 状态文件无效: {exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[bold green]✓ JYGS 状态文件有效: {get_state_path()}[/bold green]")
 
 
 @agent_app.command("fetch")

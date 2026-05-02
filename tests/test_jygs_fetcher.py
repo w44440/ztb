@@ -1,5 +1,8 @@
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pandas as pd
 
 from ztb_fetcher.fetchers.jygs_fetcher import JYGSFetcher
 
@@ -37,6 +40,33 @@ class JYGSFetcherTest(unittest.TestCase):
         ]
 
         self.assertTrue(JYGSFetcher._check_login(page))
+
+    def test_fetch_uses_central_storage_state(self):
+        db = Mock()
+        fetcher = JYGSFetcher(db)
+        state_path = Path("/tmp/jygs_state.json")
+
+        with (
+            patch("ztb_fetcher.fetchers.jygs_fetcher._cache.get", return_value=None),
+            patch("ztb_fetcher.fetchers.jygs_fetcher._cache.set"),
+            patch("ztb_fetcher.fetchers.jygs_fetcher.ensure_state", return_value=state_path) as ensure,
+            patch(
+                "ztb_fetcher.fetchers.jygs_fetcher.get_data_with_storage_state",
+                return_value=["600000 浦发银行 金融 银行股涨停"],
+            ) as get_data,
+            patch.object(
+                fetcher,
+                "_parse_data",
+                return_value=pd.DataFrame(
+                    [{"date": "2026-04-15", "code": "600000", "name": "浦发银行"}]
+                ),
+            ),
+        ):
+            df = fetcher.fetch("20260415", filter_codes={"600000"})
+
+        self.assertFalse(df.empty)
+        ensure.assert_called_once_with("jygs")
+        self.assertEqual(get_data.call_args.args[2], state_path)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from typing import Optional
 
 import pandas as pd
 from playwright.sync_api import Page
+from web_state_store import ensure_state
 
 from ztb_fetcher.config import JYGS_BASE_URL, JYGS_CACHE_DIR
 from ztb_fetcher.database import Database
@@ -19,7 +20,7 @@ from ztb_fetcher.utils.error_handler import (
     PlaywrightBrowserError,
     PlaywrightNavigationError,
 )
-from ztb_fetcher.utils.playwright_util import get_data_persistent
+from ztb_fetcher.utils.playwright_util import get_data_with_storage_state
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +64,13 @@ class JYGSFetcher:
                 self._save_to_db(df, formatted_date)
                 return df
 
-        # 使用 Playwright 持久化上下文抓取
+        # 使用集中管理的 Playwright storage_state 抓取；不回退持久化 profile。
         try:
+            state_path = ensure_state("jygs")
             fetch_data = partial(self._fetch_single_day, formatted_date)
-            texts = get_data_persistent(JYGS_BASE_URL, fetch_data, self._check_login)
+            texts = get_data_with_storage_state(
+                JYGS_BASE_URL, fetch_data, state_path, self._check_login
+            )
 
             if texts and texts[0]:
                 df = self._parse_data(texts[0].split("\n"), formatted_date, filter_codes)

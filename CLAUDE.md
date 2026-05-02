@@ -36,6 +36,12 @@ ztb_fetcher/
 2. `history`: `Database.query_history()` 汇总最近 N 日数据。
 3. `query`: `Database.query_zt_stocks/zt_reasons()`，以 Rich 表格输出。
 
+## 数据路径
+- 主运行数据默认写入 HDD `/data/ops-data/ztb`，包含 DuckDB、抓取缓存、OCR 缓存、报告图、JYGS storage_state、日志和最近运行状态。
+- `ZTB_DATA_ROOT` 或 `~/.ztb/config.json` 的 `data_root` 可覆盖主数据目录。
+- 最近一次顶层 `ztb fetch` 状态写入 `/data/ops-data/ztb/last_run.json`，随主数据目录一起走。
+- JYGS 登录态文件默认位于 `/data/ops-data/ztb/auth/jygs_storage_state.json`，由 `web_state_store` 统一下载、上传和校验。
+
 ## 模块要点
 - `cli.py`: 解析命令、组织输出、调度 fetcher 与数据库。
 - `database.py`: 维护 `zt_stocks`、`zt_reasons`、`fetch_log` 三表及写/查接口。

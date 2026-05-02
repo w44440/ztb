@@ -57,7 +57,7 @@ uv run ztb agent fetch --date YYYYMMDD
 
 ```bash
 uv run ztb fetch --date YYYYMMDD
-cat ~/.ztb/data/last_run.json
+cat /data/ops-data/ztb/last_run.json
 ```
 
 4. 用户要求图片报告时运行：
@@ -71,6 +71,8 @@ uv run ztb agent report --date YYYYMMDD
 - `ztb fetch` 是自动化入口，会生成报告并尝试企业微信推送
 - `ztb agent fetch` 是 agent 入口，只抓取和入库
 - `ztb agent context` 是回答问题的首选接口，因为它输出结构化摘要
+- 主运行数据默认位于 HDD `/data/ops-data/ztb`；最近一次顶层抓取状态位于 `/data/ops-data/ztb/last_run.json`
+- JYGS 登录态默认使用 `/data/ops-data/ztb/auth/jygs_storage_state.json`，由 `ztb fetch` 内部自动下载和校验
 
 ## Suggested Injection Order
 

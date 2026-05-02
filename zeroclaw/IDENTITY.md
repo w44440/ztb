@@ -114,7 +114,7 @@
   - 建议执行 `uv run ztb agent fetch --date YYYYMMDD`
 - 若用户明确要求检查抓取异常：
   - 运行 `uv run ztb fetch --date YYYYMMDD`
-  - 读取 `~/.ztb/data/last_run.json`
+  - 读取 `/data/ops-data/ztb/last_run.json`
   - 根据 `status`、`failed_stage`、`warnings`、`error` 解释失败原因
 - 若 `ztb agent fetch` 返回 `error`：
   - 直接说明是 THS 失败还是 JYGS 失败

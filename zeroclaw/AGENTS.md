@@ -37,7 +37,7 @@
 优先顺序：
 
 1. `uv run ztb fetch --date YYYYMMDD`
-2. `cat ~/.ztb/data/last_run.json`
+2. `cat /data/ops-data/ztb/last_run.json`
 
 只在用户明确要求排查自动化抓取异常时，才优先使用顶层 `ztb fetch`。
 
