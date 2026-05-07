@@ -68,9 +68,7 @@ class JYGSFetcher:
         try:
             state_path = ensure_state("jygs")
             fetch_data = partial(self._fetch_single_day, formatted_date)
-            texts = get_data_with_storage_state(
-                JYGS_BASE_URL, fetch_data, state_path, self._check_login
-            )
+            texts = get_data_with_storage_state(JYGS_BASE_URL, fetch_data, state_path)
 
             if texts and texts[0]:
                 df = self._parse_data(texts[0].split("\n"), formatted_date, filter_codes)
@@ -129,10 +127,6 @@ class JYGSFetcher:
         # 访问页面
         page.goto(f"{JYGS_BASE_URL}{formatted_date}")
         page.wait_for_load_state("networkidle", timeout=10000)
-
-        # 检查登录
-        if not self._check_login(page):
-            raise PlaywrightAuthError(f"页面需要登录: {formatted_date}")
 
         # 尝试点击"全部异动解析"
         try:
